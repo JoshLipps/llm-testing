@@ -26,7 +26,7 @@ x-llama-common: &llama-common
   # Server flags tuned for Strix Halo + Qwen3-Coder-30B-A3B.
   # -ngl 999 offloads everything (UMA → no real "VRAM copy"); -fa 1 + --no-mmap
   # are mandatory on this APU per kyuz0/amd-strix-halo-toolboxes.
-  # -c 65536 keeps headroom; bump to 131072 once you confirm stability.
+  # -c 262144 maximizes context; bump to 131072 once you confirm stability.
   # -b 2048 / -ub 512 = good prompt-processing throughput on gfx1151.
   command:
     - --host
@@ -40,7 +40,7 @@ x-llama-common: &llama-common
     - -ngl
     - "999"
     - -c
-    - "${CTX_SIZE:-65536}"
+    - "${CTX_SIZE:-262144}"
     - -b
     - "2048"
     - -ub

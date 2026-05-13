@@ -52,7 +52,7 @@ services:
       - -ngl
       - "999"
       - -c
-      - "${GEMMA_CTX_SIZE:-65536}"
+      - "${GEMMA_CTX_SIZE:-262144}"
       - -b
       - "2048"
       - -ub
