@@ -1,0 +1,86 @@
+# Strix Halo (Ryzen AI MAX+ 395 / Radeon 8060S, gfx1151) — llama.cpp server
+#
+# Default profile is ROCm. If ROCm misbehaves on a future llama.cpp version,
+# `docker compose --profile vulkan up` runs an upstream Vulkan image instead;
+# both serve the same OpenAI-compatible API on $LLAMA_PORT (default 8080).
+
+name: qwen-stack
+
+x-llama-common: &llama-common
+  restart: unless-stopped
+  ports:
+    - "${LLAMA_HOST:-127.0.0.1}:${LLAMA_PORT:-8080}:8080"
+  devices:
+    - /dev/kfd
+    - /dev/dri
+  group_add:
+    - video
+    - render
+  security_opt:
+    - seccomp=unconfined
+  ipc: host
+  cap_add:
+    - SYS_PTRACE
+  volumes:
+    - ./models:/models:ro
+  # Server flags tuned for Strix Halo + Qwen3-Coder-30B-A3B.
+  # -ngl 999 offloads everything (UMA → no real "VRAM copy"); -fa 1 + --no-mmap
+  # are mandatory on this APU per kyuz0/amd-strix-halo-toolboxes.
+  # -c 65536 keeps headroom; bump to 131072 once you confirm stability.
+  # -b 2048 / -ub 512 = good prompt-processing throughput on gfx1151.
+  command:
+    - --host
+    - 0.0.0.0
+    - --port
+    - "8080"
+    - --model
+    - /models/${MODEL_FILE:-Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf}
+    - --alias
+    - ${MODEL_ALIAS:-qwen3-coder}
+    - -ngl
+    - "999"
+    - -c
+    - "${CTX_SIZE:-65536}"
+    - -b
+    - "2048"
+    - -ub
+    - "512"
+    - -fa
+    - "1"
+    - --no-mmap
+    - --jinja
+    - --metrics
+    - --cache-reuse
+    - "256"
+
+services:
+  llama:
+    <<: *llama-common
+    profiles: ["", "rocm"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ROCM_VERSION: "7.2.2"
+    image: llama-rocm-strixhalo:local
+    container_name: llama-rocm
+    environment:
+      # gfx1151 is built in via AMDGPU_TARGETS, but keep this as a belt-and-braces
+      # fallback in case the runtime ever decides we're a generic gfx11.
+      HSA_OVERRIDE_GFX_VERSION: "11.5.1"
+      # Strix Halo APU: SDMA on the integrated path is racy. Disable.
+      HSA_ENABLE_SDMA: "0"
+      # Single visible device (0 = the iGPU)
+      ROCR_VISIBLE_DEVICES: "0"
+      HIP_VISIBLE_DEVICES: "0"
+      # Hint HIP to allocate from the unified pool.
+      GGML_HIP_UMA: "1"
+
+  llama-vulkan:
+    <<: *llama-common
+    profiles: ["vulkan"]
+    image: ghcr.io/ggml-org/llama.cpp:server-vulkan
+    container_name: llama-vulkan
+    environment:
+      # RADV is more stable than AMDVLK on gfx1151 right now.
+      AMD_VULKAN_ICD: "RADV"

@@ -1,0 +1,68 @@
+# Gemma-4-26B-A4B-it on llama.cpp + ROCm, parallel to the Qwen stack.
+#
+#   docker compose -f docker-compose.gemma.yaml up -d
+#   docker compose -f docker-compose.gemma.yaml logs -f llama-gemma
+#   docker compose -f docker-compose.gemma.yaml down
+#
+# Re-uses the prebuilt image `llama-rocm-strixhalo:local` from docker-compose.yaml,
+# so build the Qwen stack first (or run `docker compose build` once) before bringing
+# this up. Binds 127.0.0.1:8081 to avoid colliding with the Qwen server on 8080.
+
+name: gemma-stack
+
+services:
+  llama-gemma:
+    image: llama-rocm-strixhalo:local
+    container_name: llama-gemma
+    restart: unless-stopped
+    ports:
+      - "${GEMMA_HOST:-127.0.0.1}:${GEMMA_PORT:-8081}:8080"
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    ipc: host
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./models:/models:ro
+    environment:
+      HSA_OVERRIDE_GFX_VERSION: "11.5.1"
+      HSA_ENABLE_SDMA: "0"
+      ROCR_VISIBLE_DEVICES: "0"
+      HIP_VISIBLE_DEVICES: "0"
+      GGML_HIP_UMA: "1"
+    # Gemma-4 has a 256K native context, but we cap at 65536 for memory headroom
+    # since this stack often runs in parallel with Qwen. --jinja enables the
+    # native function-calling parser; chat-template-kwargs disables the model's
+    # internal "thinking" mode (we want fast tool calls, not chain-of-thought).
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --model
+      - /models/${GEMMA_MODEL_FILE:-gemma-4-26B-A4B-it-Q8_0.gguf}
+      - --alias
+      - ${GEMMA_MODEL_ALIAS:-gemma4-26b}
+      - -ngl
+      - "999"
+      - -c
+      - "${GEMMA_CTX_SIZE:-65536}"
+      - -b
+      - "2048"
+      - -ub
+      - "512"
+      - -fa
+      - "1"
+      - --no-mmap
+      - --jinja
+      - --metrics
+      - --cache-reuse
+      - "256"
+      - --chat-template-kwargs
+      - '{"enable_thinking":false}'

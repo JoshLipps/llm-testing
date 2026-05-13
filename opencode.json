@@ -1,0 +1,66 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "llama-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "llama.cpp (Strix Halo)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8080/v1"
+      },
+      "models": {
+        "qwen3-coder": {
+          "name": "Qwen3-Coder 30B-A3B (local)",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": false,
+          "attachment": false,
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
+        }
+      }
+    },
+    "llama-gemma": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Gemma 4 (Strix Halo)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8081/v1"
+      },
+      "models": {
+        "gemma4-26b": {
+          "name": "Gemma 4 26B-A4B (local)",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": false,
+          "attachment": true,
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
+        }
+      }
+    },
+    "vllm-gemma": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Gemma 4 vLLM+MTP (Strix Halo)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8082/v1"
+      },
+      "models": {
+        "gemma4-26b-vllm": {
+          "name": "Gemma 4 26B-A4B vLLM+MTP (local)",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": false,
+          "attachment": true,
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
+  "model": "llama-local/qwen3-coder"
+}

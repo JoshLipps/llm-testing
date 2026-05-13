@@ -1,0 +1,41 @@
+# vLLM for AMD Strix Halo (gfx1151). EXPERIMENTAL — vLLM does not officially
+# target gfx1151; this builds from source with PYTORCH_ROCM_ARCH=gfx1151 so the
+# HIP kernels compile for this APU. Expect a 30–60 min first-time build.
+#
+# If the build fails, the usual culprits are:
+#   - flash-attn ROCm variants (vLLM picks one; we force-disable Triton FA below)
+#   - xformers (skip — vLLM works without it on ROCm)
+#   - hipBLASLt missing kernels for gfx1151 (falls back to rocBLAS, slower but ok)
+
+ARG ROCM_VERSION=7.2.2
+FROM rocm/pytorch:rocm${ROCM_VERSION}_ubuntu22.04_py3.10_pytorch_release_2.9.1 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ninja-build pkg-config ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build for Strix Halo only — keeps wheel size sane and avoids generic-gfx11 fallbacks.
+ENV PYTORCH_ROCM_ARCH=gfx1151
+ENV MAX_JOBS=8
+
+ARG VLLM_REF=main
+WORKDIR /src
+RUN git clone --depth 1 --branch ${VLLM_REF} https://github.com/vllm-project/vllm.git
+
+WORKDIR /src/vllm
+RUN pip install --no-cache-dir -U pip wheel setuptools packaging "cmake>=3.27" \
+    && pip install --no-cache-dir -r requirements/rocm.txt \
+    && python setup.py develop
+
+# amdsmi: vLLM uses this to detect AMD GPUs in vllm.platforms.rocm; not in the
+# rocm/pytorch base image, so install it from the ROCm distribution path.
+RUN pip install --no-cache-dir /opt/rocm/share/amd_smi
+
+# hf_transfer = much faster HF Hub downloads, worth it for 50 GB bf16 weights.
+
+RUN pip install --no-cache-dir hf_transfer
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+
+EXPOSE 8080
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]

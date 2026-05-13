@@ -1,0 +1,94 @@
+# Gemma-4-26B-A4B-it on vLLM + ROCm. Parallel to the llama.cpp stacks, on 8082.
+#
+#   docker compose -f docker-compose.vllm.yaml build      # 30–60 min first time
+#   docker compose -f docker-compose.vllm.yaml up -d
+#   docker compose -f docker-compose.vllm.yaml logs -f vllm-gemma
+#
+# Why vLLM instead of llama.cpp here:
+#   - Gemma 4 ships an official MTP drafter checkpoint; vLLM's speculative-decode
+#     path accepts it directly today, while llama.cpp MTP support (#22673) is
+#     still in draft. Once that lands, the llama.cpp stack will likely be faster
+#     on this APU; until then vLLM is the only path to MTP on Strix Halo.
+#
+# Caveats:
+#   - vLLM does not officially target gfx1151. Build from source (see Dockerfile.vllm).
+#   - vLLM loads HF safetensors, not GGUF. Bf16 26B ≈ 52 GB, fits easily in 128 GB
+#     unified memory. The Q8 GGUF in ./models is not used by this stack.
+#   - Gemma is a gated model; export HF_TOKEN before `up`.
+#   - Set VLLM_DRAFT_MODEL to the actual MTP drafter repo on HF (placeholder below).
+
+name: gemma-vllm-stack
+
+services:
+  vllm-gemma:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+      args:
+        ROCM_VERSION: "7.2.2"
+    image: vllm-rocm-strixhalo:local
+    container_name: vllm-gemma
+    restart: unless-stopped
+    ports:
+      - "${VLLM_HOST:-127.0.0.1}:${VLLM_PORT:-8082}:8080"
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - "983"  # video gid (host)
+      - "987"  # render gid (host)
+    security_opt:
+      - seccomp=unconfined
+    ipc: host
+    cap_add:
+      - SYS_PTRACE
+    shm_size: "16gb"
+    volumes:
+      # Reuse the host HF cache so weights aren't re-downloaded between rebuilds.
+      - ${HF_HOME:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      # gfx1151 fallback in case the runtime guesses wrong (matches llama.cpp stack).
+      HSA_OVERRIDE_GFX_VERSION: "11.5.1"
+      HSA_ENABLE_SDMA: "0"
+      ROCR_VISIBLE_DEVICES: "0"
+      HIP_VISIBLE_DEVICES: "0"
+      PYTORCH_ROCM_ARCH: "gfx1151"
+      # Triton flash-attn is unreliable on RDNA 3.5; use the SDPA fallback.
+      VLLM_USE_TRITON_FLASH_ATTN: "0"
+      # tvm_ffi (pulled in by xgrammar) tries to dlopen libtorch_cuda.so on import.
+      # Skip that path — we are on ROCm, no CUDA libs present.
+      TVM_FFI_DISABLE_TORCH_C_DLPACK: "1"
+      VLLM_LOGGING_LEVEL: "DEBUG"
+      # Required to pull google/gemma-4-* (gated). Put in .env.
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HUB_ENABLE_HF_TRANSFER: "1"
+    command:
+      - --model
+      - ${VLLM_MODEL:-google/gemma-4-26b-a4b-it}
+      - --served-model-name
+      - ${VLLM_MODEL_ALIAS:-gemma4-26b}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --max-model-len
+      - "${VLLM_CTX_SIZE:-262144}"
+      - --dtype
+      - bfloat16
+      # UMA: weights+activation+overhead lock ~58 GiB regardless. Pin KV cache
+      # directly instead of using gpu-memory-utilization so we don't have to
+      # re-tune the ratio every time those fixed costs shift. 50 GiB KV ≈ 1.08M
+      # tokens at ~48 KB/token, total footprint ~108 GiB, leaves ~20 GiB system.
+      - --kv-cache-memory
+      - "${VLLM_KV_CACHE_BYTES:-53687091200}"
+      # Speculative decoding via the official Gemma 4 MTP drafter.
+      # vLLM (post ~2025-09) replaced --speculative-model / --num-speculative-tokens
+      # with one --speculative-config JSON blob. method=gemma4_mtp is the dedicated
+      # path for the official Google drafter.
+      - --speculative-config
+      - '{"method":"gemma4_mtp","model":"${VLLM_DRAFT_MODEL:-google/gemma-4-26B-A4B-it-assistant}","num_speculative_tokens":${VLLM_SPEC_TOKENS:-3}}'
+      # CUDA graphs / torch.compile paths are flaky on gfx1151; eager is safer.
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - gemma4
+      - --enforce-eager
